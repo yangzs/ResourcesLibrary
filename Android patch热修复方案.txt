@@ -1,0 +1,96 @@
+0.介绍：紧急代码修改代码量少的时候，不重新打包发布的紧急修复方案。
+
+1,热补丁背景：
+	当一个App发布之后，突然发现了一个严重bug需要进行紧急修复，这时候公司各方就会忙得焦头烂额：重新打包App、测试、向各个应用市场和渠道换包、提示用户升级、用户下载、覆盖安装。有时候仅仅是为了修改了一行代码，也要付出巨大的成本进行换包和重新发布。
+
+	目前github上开源的热修复框架：（3个库实现的原理都是一样的，都是根据dex分包原理。推荐使用nuwa，代码简单，易集成）
+	https://github.com/dodola/HotFix
+	https://github.com/jasonross/Nuwa
+	https://github.com/bunnyblue/DroidFix
+
+2.原理：当修复好的bug类打包成dex补丁，通知客户端有需要更新的补丁包，客户端下载补丁包到手机内存卡中，用内存卡中的修复好的类插入到app的classloader中，程序优先使用修复好的新类。
+
+3.实现流程：
+	1》应用下载补丁到sdcard，DexClassLoader从sdcard加载补丁，插入替换原有bug类的机制。  
+	2》协商通知客户端有补丁包下载的协议。 
+	3》实现修复好的类打包成安卓能识别的补丁包（ dx 等工具）
+
+4.研究路线：编写插入补丁逻辑-》 打包补丁包放入内存卡-》用补丁包替换有bug的类-》补丁包放入服务器实现下载完成后动态更新（先用xml和补丁文件放入七牛去实现）-》和服务端定通知下载 协议
+
+5.具体实现逻辑：
+	1》服务器实现一个接口，用来判定是否需要下载patch
+	2》app在splash界面请求上面接口，是否由patch更新
+	3》下载patch包（patch包不宜过大）
+	4》下载后用nuwa加载patch包。然后在启动主界面。注：不能在application类中加载，因为是在splash中下载的patch包。
+	5》打包的patch为jar包。
+
+具体原理：
+	android中加载类一般使用的是PathClassLoader和DexClassLoader，首先看下这两个类的区别：
+	PathClassLoader:Android是使用这个类作为其系统类和应用类的加载器。并且对于这个类呢，只能去加载已经安装到Android系统中的apk文件。
+	DexClassLoader:可以用来从.jar和.apk类型的文件内部加载classes.dex文件。可以用来执行非安装的程序代码。
+	Android使用PathClassLoader作为其类加载器，DexClassLoader可以从.jar和.apk类型的文件内部加载classes.dex文件就好了。
+
+
+参考：http://blog.csdn.net/lmj623565791/article/details/49883661
+参考资料：https://mp.weixin.qq.com/s?__biz=MzI1MTA1MzM2Nw==&mid=400118620&idx=1&sn=b4fdd5055731290eef12ad0d17f39d4a&scene=1&srcid=1106Imu9ZgwybID13e7y2nEi#wechat_redirect
+
+YacApp使用nuwa热修复。
+1》Get Gradle Plugin：在项目的build.gradle文件中添加nuwa的库依赖。
+
+    add following to the build.gradle of your root project.
+
+        classpath 'cn.jiajixin.nuwa:gradle:1.2.2'
+
+    build.gradle maybe look like this:
+
+    buildscript {
+        repositories {
+            jcenter()
+        }
+        dependencies {
+            classpath 'com.android.tools.build:gradle:1.2.3'
+            classpath 'cn.jiajixin.nuwa:gradle:1.2.2'
+        }
+    }
+
+    add following to your build.gradle:在app(model)的build.gradle文件中，添加依赖
+
+        apply plugin: "cn.jiajixin.nuwa"
+
+Get Nuwa SDK
+
+    gradle dependency:添加库的引用
+
+    dependencies {
+        compile 'cn.jiajixin.nuwa:nuwa:1.0.0'
+    }
+
+Use Nuwa SDK：使用nuwa的patch加载
+
+    add following to your application class:
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(base);
+        Nuwa.init(this);
+    }
+
+    load the patch file according to your needs:在你想加载patch的地方，加载patch文件，修复bug。
+
+    Nuwa.loadPatch(this,patchFile)
+	
+注：nuwa的DSL。
+nuwa{
+    excludeClass=['com/yac/yacapp/domain/CarUser.class']//因为静态引用这个类的变量，所以忽略此类
+}
+
+运行：
+1，先运行工程，然后载build下生成nuwa的文件夹，里面有每个类的hash值。此文件夹和相应的apk保存起来
+2，如果需要打patch包，那么就需要载终端运行： ./gradlew clean nuwaBaidushoujizhushouReleasePatch -P NuwaDir=/home/mr_yang/workspace_studio/tmp/nuwa
+
+nuwaBaidushoujizhushouReleasePatch ：对应的是app的渠道名，debug，release版本，然后在app/build/outputs/nuwa/下生成patch.jar包
+
+
+
+
+
